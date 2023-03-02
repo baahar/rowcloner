@@ -1,6 +1,6 @@
 # rowcloner
 
-The code works with PostgreSQL databases. One to pull the data from and one to clone the data to. 
+The code works with two PostgreSQL databases. One to pull the data from and one to clone the data to. 
 
 You can use the following schema to create example tables in both.
 
