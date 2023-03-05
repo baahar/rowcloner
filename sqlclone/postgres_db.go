@@ -275,13 +275,14 @@ func (db postgresDB) insertRow(primary_keys map[string][]string, auto_values map
 	query += cols + ") VALUES (" + vals + ")"
 	if av != "" {
 		query += " RETURNING " + av
+		fmt.Println(query)
+		fmt.Println(values_array)
+
 		lastInsertId := -1
 		err := db.QueryRow(query, values_array...).Scan(&lastInsertId)
 		if err != nil {
 			return nil, err
 		}
-		fmt.Print("last id: ")
-		fmt.Println(lastInsertId)
 
 		// update mapping
 		ids, exists := mapping[table_name]
@@ -292,13 +293,14 @@ func (db postgresDB) insertRow(primary_keys map[string][]string, auto_values map
 			mapping[table_name] = map[string]string{fmt.Sprintf("%v", data["id"]): fmt.Sprintf("%d", lastInsertId)}
 		}
 	} else {
+		fmt.Println(query)
+		fmt.Println(values_array)
+
 		_, err := db.Exec(query, values_array...)
 		if err != nil {
 			return nil, err
 		}
 	}
-	fmt.Println(query)
-	fmt.Println(values_array)
 
 	return mapping, nil
 }

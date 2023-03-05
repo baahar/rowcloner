@@ -11,7 +11,8 @@ func main() {
 
 	// define with which row(s) the cloning should start and which table(s) should be ignored during the process
 	download_options, err := sqlclone.NewDownloadOptions(
-		sqlclone.Include("purchase", "person_id", "2"),
+		sqlclone.Include("person", "id", "1"),
+		sqlclone.Include("person", "id", "2"),
 		sqlclone.DontRecurse("user"),
 	)
 	if err != nil {

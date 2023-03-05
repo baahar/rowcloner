@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"reflect"
 	"sort"
 
 	_ "github.com/lib/pq"
@@ -31,7 +32,10 @@ func download(db database, options *DownloadOptions) (DatabaseDump, error) {
 	}
 
 	database_dump := make(DatabaseDump)
-	return getDataRecursively(db, references, database_dump, options.dont_recurse, options.start_points[0].table, options.start_points[0].column, options.start_points[0].value)
+	for _, sp := range options.start_points {
+		database_dump, err = getDataRecursively(db, references, database_dump, options.dont_recurse, sp.table, sp.column, sp.value)
+	}
+	return database_dump, err
 }
 
 func Upload(cp *ConnectionParameters, data DatabaseDump) error {
@@ -79,6 +83,9 @@ func upload(db database, data DatabaseDump) error {
 		}
 		for _, r := range data[t] {
 			mapping, err = db.insertRow(primary_keys, auto_values, references, mapping, t, r)
+			for key, value := range mapping {
+				fmt.Println(key, value)
+			}
 		}
 	}
 	return err
@@ -91,19 +98,21 @@ func getDataRecursively(db database, references References, database_dump Databa
 			return nil, err
 		}
 		for _, r := range rows {
-			database_dump[table_name] = append(database_dump[table_name], r)
+			if !dumpContainsRow(database_dump[table_name], r) {
+				database_dump[table_name] = append(database_dump[table_name], r)
 
-			var df = getReferencesFromTable(references, table_name)
-			for _, d := range df {
-				if !dumpContains(database_dump, d.referenced_table_name, d.referenced_column_name, r[d.column_name]) {
-					getDataRecursively(db, references, database_dump, dont_recurse, d.referenced_table_name, d.referenced_column_name, r[d.column_name])
+				var df = getReferencesFromTable(references, table_name)
+				for _, d := range df {
+					if !dumpContainsResultOfQuery(database_dump, d.referenced_table_name, d.referenced_column_name, r[d.column_name]) {
+						getDataRecursively(db, references, database_dump, dont_recurse, d.referenced_table_name, d.referenced_column_name, r[d.column_name])
+					}
 				}
-			}
 
-			var dr = getReferencesToTable(references, table_name)
-			for _, d := range dr {
-				if !dumpContains(database_dump, d.table_name, d.column_name, val) {
-					getDataRecursively(db, references, database_dump, dont_recurse, d.table_name, d.column_name, val)
+				var dr = getReferencesToTable(references, table_name)
+				for _, d := range dr {
+					if !dumpContainsResultOfQuery(database_dump, d.table_name, d.column_name, val) {
+						getDataRecursively(db, references, database_dump, dont_recurse, d.table_name, d.column_name, val)
+					}
 				}
 			}
 		}
@@ -122,11 +131,21 @@ func sliceContains(mySlice []string, searchString string) bool {
 	return false
 }
 
-func dumpContains(database_dump DatabaseDump, table_name string, col string, val interface{}) bool {
+func dumpContainsResultOfQuery(database_dump DatabaseDump, table_name string, col string, val interface{}) bool {
 	var rows = database_dump[table_name]
 	for _, r := range rows {
 		v, ok := r[col]
 		if ok && v == val {
+			return true
+		}
+	}
+	return false
+}
+
+func dumpContainsRow(data []map[string]interface{}, row map[string]interface{}) bool {
+	for _, currMap := range data {
+		if reflect.DeepEqual(currMap, row) {
+			fmt.Println(currMap)
 			return true
 		}
 	}
