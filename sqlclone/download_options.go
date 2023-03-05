@@ -28,7 +28,7 @@ func NewDownloadOptions(opts ...DownloadOption) (*DownloadOptions, error) {
 	}
 
 	if len(do.start_points) == 0 {
-		return nil, errors.New("Starting point for cloning is missing.")
+		return nil, errors.New("starting point for cloning is missing")
 	}
 
 	// return the modified DownloadOptions instance

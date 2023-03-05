@@ -82,13 +82,13 @@ func upload(db database, data DatabaseDump) error {
 			})
 		}
 		for _, r := range data[t] {
-			mapping, err = db.insertRow(primary_keys, auto_values, references, mapping, t, r)
-			for key, value := range mapping {
-				fmt.Println(key, value)
+			mapping, err = uploadRow(db, primary_keys, auto_values, references, mapping, t, r)
+			if err != nil {
+				return err
 			}
 		}
 	}
-	return err
+	return nil
 }
 
 func getDataRecursively(db database, references References, database_dump DatabaseDump, dont_recurse []string, table_name string, col string, val interface{}) (DatabaseDump, error) {
@@ -118,6 +118,66 @@ func getDataRecursively(db database, references References, database_dump Databa
 		}
 	}
 	return database_dump, nil
+}
+
+// insert a row into the target database and update the mapping if necessary
+func uploadRow(db database, primary_keys map[string][]string, auto_values map[string][]string, references References, mapping Mapping, table_name string, data map[string]interface{}) (Mapping, error) {
+
+	columns := make([]string, 0)
+	av := ""
+	for key := range data {
+		if !sliceContains(auto_values[table_name], key) {
+			columns = append(columns, key)
+		} else {
+			av = key // column that has an auto value
+		}
+	}
+
+	values := make([]interface{}, 0)
+	for _, key := range columns {
+		d, exists := getReference(references[table_name], key)
+		if exists {
+			// column contains a value that references another table
+			// --> we need to use the updated value in the reference map
+			if data[key] != nil {
+				ids, exists := mapping[d.referenced_table_name]
+				if exists {
+					values = append(values, ids[fmt.Sprintf("%v", data[key])])
+				} else {
+					// should never be the case as we put the new ids into mapping, but just in case this would use the old value
+					// todo: should we abort with error message?
+					values = append(values, data[key])
+				}
+			} else {
+				values = append(values, nil)
+			}
+		} else {
+			if data[key] != nil {
+				values = append(values, data[key])
+			} else {
+				values = append(values, nil)
+			}
+		}
+
+	}
+
+	lastInsertId, err := db.insertRow(table_name, columns, values, av)
+	if err != nil {
+		return mapping, err
+	}
+
+	if lastInsertId != -1 {
+		// update mapping
+		ids, exists := mapping[table_name]
+		if exists {
+			ids[fmt.Sprintf("%v", data["id"])] = fmt.Sprintf("%d", lastInsertId)
+		} else {
+			// first entry
+			mapping[table_name] = map[string]string{fmt.Sprintf("%v", data["id"]): fmt.Sprintf("%d", lastInsertId)}
+		}
+	}
+
+	return mapping, nil
 }
 
 // ----- HELPER FUNCTIONS -----

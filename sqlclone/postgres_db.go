@@ -12,7 +12,7 @@ type postgresDB struct {
 
 type database interface {
 	getRows(string, string, interface{}) ([]map[string]interface{}, error)
-	insertRow(map[string][]string, map[string][]string, References, Mapping, string, map[string]interface{}) (Mapping, error)
+	insertRow(string, []string, []interface{}, string) (int, error)
 	getTables() ([]string, error)
 	getReferences() (References, error)
 	getDependencyOrder() ([]string, error)
@@ -136,8 +136,8 @@ func (db postgresDB) getColumnsWithDefaultValues() (map[string][]string, error) 
 	return auto_values, nil
 }
 
-// Returns the list of tables after a topological sort following Kahn's algorithm.
-// This list will be used to perform cloning so that data is inserted into the target database
+// returns the list of tables after a topological sort following Kahn's algorithm.
+// this list will be used to perform cloning so that data is inserted into the target database
 // before it is needed by referencing rows later on
 func (db postgresDB) getDependencyOrder() ([]string, error) {
 	references, err := db.getReferences()
@@ -223,86 +223,44 @@ func (db postgresDB) getRows(table_name string, col string, val interface{}) ([]
 	return ret, nil
 }
 
-// to clone a row to the target database and update the mapping if necessary
-func (db postgresDB) insertRow(primary_keys map[string][]string, auto_values map[string][]string, references References, mapping Mapping, table_name string, data map[string]interface{}) (Mapping, error) {
-	query := "INSERT INTO " + table_name + " ("
-	column_order := make([]string, 0)
+// insert a row with given column names and values into a database.
+// if the table has a column with an automatically generated value,
+// return that value after insertion, return -1 otherwise
+func (db postgresDB) insertRow(table_name string, columns []string, values []interface{}, auto_value string) (int, error) {
 	cols := ""
 	vals := ""
-	av := ""
 	counter := 1
-	for key := range data {
-		if !sliceContains(auto_values[table_name], key) {
-			cols += key + ", "
-			column_order = append(column_order, key)
+	for _, c := range columns {
+		if c != auto_value {
+			cols += c + ", "
 			vals += "$" + fmt.Sprintf("%d", counter) + ", "
 			counter++
-		} else {
-			av = key // column that has an auto value
 		}
 	}
 	cols = cols[:len(cols)-2]
 	vals = vals[:len(vals)-2]
 
-	values_array := make([]interface{}, 0)
-	for _, key := range column_order {
-		d, exists := getReference(references[table_name], key)
-		if exists {
-			// column contains a value that references another table
-			// --> we need to use the updated value in the reference map
-			if data[key] != nil {
-				ids, exists := mapping[d.referenced_table_name]
-				if exists {
-					values_array = append(values_array, ids[fmt.Sprintf("%v", data[key])])
-				} else {
-					// should never be the case as we put the new ids into mapping, but just in case this would use the old value
-					// todo: should we abort with error message
-					values_array = append(values_array, data[key])
-				}
-			} else {
-				values_array = append(values_array, nil)
-			}
-		} else {
-			if data[key] != nil {
-				values_array = append(values_array, data[key])
-			} else {
-				values_array = append(values_array, nil)
-			}
-		}
+	query := "INSERT INTO " + table_name + " (" + cols + ") VALUES (" + vals + ")"
+	fmt.Println(query)
+	fmt.Println(values)
 
-	}
+	lastInsertId := -1
+	if auto_value != "" {
+		query += " RETURNING " + auto_value
 
-	query += cols + ") VALUES (" + vals + ")"
-	if av != "" {
-		query += " RETURNING " + av
-		fmt.Println(query)
-		fmt.Println(values_array)
-
-		lastInsertId := -1
-		err := db.QueryRow(query, values_array...).Scan(&lastInsertId)
+		err := db.QueryRow(query, values...).Scan(&lastInsertId)
 		if err != nil {
-			return nil, err
+			return -1, err
 		}
 
-		// update mapping
-		ids, exists := mapping[table_name]
-		if exists {
-			ids[fmt.Sprintf("%v", data["id"])] = fmt.Sprintf("%d", lastInsertId)
-		} else {
-			// first entry
-			mapping[table_name] = map[string]string{fmt.Sprintf("%v", data["id"]): fmt.Sprintf("%d", lastInsertId)}
-		}
 	} else {
-		fmt.Println(query)
-		fmt.Println(values_array)
-
-		_, err := db.Exec(query, values_array...)
+		_, err := db.Exec(query, values...)
 		if err != nil {
-			return nil, err
+			return -1, err
 		}
 	}
 
-	return mapping, nil
+	return lastInsertId, nil
 }
 
 func isTableSelfReferencing(references References, table_name string) (bool, string) {
