@@ -20,7 +20,10 @@ func main() {
 
 	from_cp := sqlclone.NewConnectionParameters("localhost", 5432, "baay", "deneme", "db_sqlclone")
 
-	dump, dependencies, order := sqlclone.Download(from_cp, download_options)
+	dump, err := sqlclone.Download(from_cp, download_options)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	dataBytes, err := json.Marshal(dump)
 	if err != nil {
@@ -32,7 +35,10 @@ func main() {
 	fmt.Println()
 
 	to_cp := sqlclone.NewConnectionParameters("localhost", 5432, "baay", "deneme", "db_sqlclone_to")
-	sqlclone.Upload(to_cp, dependencies, dump, order)
+	err = sqlclone.Upload(to_cp, dump)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	fmt.Println("hallo welt")
 
