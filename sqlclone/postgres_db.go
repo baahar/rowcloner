@@ -161,7 +161,7 @@ func (db postgresDB) getRows(table_name string, col string, val interface{}) ([]
 	ret := make([]map[string]interface{}, 0)
 
 	if val != nil {
-		fmt.Println("SELECT * FROM " + table_name + " WHERE " + col + "='" + fmt.Sprintf("%v", val) + "'")
+		//fmt.Println("SELECT * FROM " + table_name + " WHERE " + col + "='" + fmt.Sprintf("%v", val) + "'")
 		rows, err := db.Query("SELECT * FROM "+table_name+" WHERE "+col+"=$1", val)
 		if err != nil {
 			return nil, err
@@ -210,8 +210,8 @@ func (db postgresDB) insertRow(table_name string, columns []string, values []int
 	vals = vals[:len(vals)-2]
 
 	query := "INSERT INTO " + table_name + " (" + cols + ") VALUES (" + vals + ")"
-	fmt.Println(query)
-	fmt.Println(values)
+	//fmt.Println(query)
+	//fmt.Println(values)
 
 	lastInsertId := -1
 	if auto_value != "" {

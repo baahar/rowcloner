@@ -35,11 +35,12 @@ func main() {
 	fmt.Println()
 
 	to_cp := sqlclone.NewConnectionParameters("localhost", 5432, "baay", "deneme", "db_sqlclone_to")
-	err = sqlclone.Upload(to_cp, dump)
+	mm, err := sqlclone.Upload(to_cp, dump)
 	if err != nil {
 		log.Fatal(err)
 	}
 
+	fmt.Println(mm)
 	fmt.Println("hallo welt")
 
 }
