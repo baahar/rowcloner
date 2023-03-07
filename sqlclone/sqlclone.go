@@ -14,6 +14,9 @@ type References map[string][]TableReference
 type DatabaseDump map[string][]map[string]interface{}
 type Mapping map[string]map[string]string
 
+// gets all related rows to the starting points as specified in the download options
+// from the source database as specified in the connection parameters.
+// returns the collected data as a DatabaseDump of the structure: map[string][]map[string]interface{}
 func Download(cp *ConnectionParameters, options *DownloadOptions) (DatabaseDump, error) {
 	from_db, err := sql.Open("postgres", fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
 		cp.host, cp.port, cp.user, cp.password, cp.dbname))
@@ -38,37 +41,34 @@ func download(db database, options *DownloadOptions) (DatabaseDump, error) {
 	return database_dump, err
 }
 
-func Upload(cp *ConnectionParameters, data DatabaseDump) error {
+// inserts all downloaded rows in the DatabaseDump into the target database as specified in the connection parameters.
+// returns a map of the structure map[string]map[string]string that shows which identifiers in the source database
+// correspond to which identifiers in the target database
+func Upload(cp *ConnectionParameters, data DatabaseDump) (Mapping, error) {
 	to_db, err := sql.Open("postgres", fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
 		cp.host, cp.port, cp.user, cp.password, cp.dbname))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer to_db.Close()
 
 	return upload(postgresDB{to_db}, data)
 }
 
-func upload(db database, data DatabaseDump) error {
-
+func upload(db database, data DatabaseDump) (Mapping, error) {
 	order, err := db.getDependencyOrder()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	references, err := db.getReferences()
 	if err != nil {
-		return err
-	}
-
-	primary_keys, err := db.getPrimaryKeys()
-	if err != nil {
-		return err
+		return nil, err
 	}
 
 	auto_values, err := db.getColumnsWithDefaultValues()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	mapping := make(Mapping)
@@ -82,47 +82,47 @@ func upload(db database, data DatabaseDump) error {
 			})
 		}
 		for _, r := range data[t] {
-			mapping, err = uploadRow(db, primary_keys, auto_values, references, mapping, t, r)
+			mapping, err = uploadRow(db, auto_values, references, mapping, t, r)
 			if err != nil {
-				return err
+				return mapping, err
 			}
 		}
 	}
-	return nil
+	return mapping, nil
 }
 
 func getDataRecursively(db database, references References, database_dump DatabaseDump, dont_recurse []string, table_name string, col string, val interface{}) (DatabaseDump, error) {
-	if !sliceContains(dont_recurse, table_name) {
-		rows, err := db.getRows(table_name, col, val)
-		if err != nil {
-			return nil, err
-		}
-		for _, r := range rows {
-			if !dumpContainsRow(database_dump[table_name], r) {
-				database_dump[table_name] = append(database_dump[table_name], r)
+	rows, err := db.getRows(table_name, col, val)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range rows {
+		if !dumpContainsRow(database_dump[table_name], r) {
+			database_dump[table_name] = append(database_dump[table_name], r)
 
-				var df = getReferencesFromTable(references, table_name)
-				for _, d := range df {
-					if !dumpContainsResultOfQuery(database_dump, d.referenced_table_name, d.referenced_column_name, r[d.column_name]) {
-						getDataRecursively(db, references, database_dump, dont_recurse, d.referenced_table_name, d.referenced_column_name, r[d.column_name])
-					}
+			var df = getReferencesFromTable(references, table_name)
+			for _, d := range df {
+				if !dumpContainsResultOfQuery(database_dump, d.referenced_table_name, d.referenced_column_name, r[d.column_name]) &&
+					!sliceContains(dont_recurse, d.referenced_table_name) {
+					getDataRecursively(db, references, database_dump, dont_recurse, d.referenced_table_name, d.referenced_column_name, r[d.column_name])
 				}
+			}
 
-				var dr = getReferencesToTable(references, table_name)
-				for _, d := range dr {
-					if !dumpContainsResultOfQuery(database_dump, d.table_name, d.column_name, val) {
-						getDataRecursively(db, references, database_dump, dont_recurse, d.table_name, d.column_name, val)
-					}
+			var dr = getReferencesToTable(references, table_name)
+			for _, d := range dr {
+				if !dumpContainsResultOfQuery(database_dump, d.table_name, d.column_name, val) &&
+					!sliceContains(dont_recurse, d.table_name) {
+					getDataRecursively(db, references, database_dump, dont_recurse, d.table_name, d.column_name, r[d.referenced_column_name])
 				}
 			}
 		}
 	}
+
 	return database_dump, nil
 }
 
 // insert a row into the target database and update the mapping if necessary
-func uploadRow(db database, primary_keys map[string][]string, auto_values map[string][]string, references References, mapping Mapping, table_name string, data map[string]interface{}) (Mapping, error) {
-
+func uploadRow(db database, auto_values map[string][]string, references References, mapping Mapping, table_name string, data map[string]interface{}) (Mapping, error) {
 	columns := make([]string, 0)
 	av := ""
 	for key := range data {
@@ -191,6 +191,8 @@ func sliceContains(mySlice []string, searchString string) bool {
 	return false
 }
 
+// check whether dump already contains the result of a previous select-query.
+// used to stop recursion so that queries are not repeated
 func dumpContainsResultOfQuery(database_dump DatabaseDump, table_name string, col string, val interface{}) bool {
 	var rows = database_dump[table_name]
 	for _, r := range rows {
@@ -202,10 +204,12 @@ func dumpContainsResultOfQuery(database_dump DatabaseDump, table_name string, co
 	return false
 }
 
+// check whether dump already contains data from a previously selected row.
+// used to prevent duplicate data in the dump, because the same row can
+// be selected via different select-queries
 func dumpContainsRow(data []map[string]interface{}, row map[string]interface{}) bool {
 	for _, currMap := range data {
 		if reflect.DeepEqual(currMap, row) {
-			fmt.Println(currMap)
 			return true
 		}
 	}

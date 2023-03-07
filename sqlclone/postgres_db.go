@@ -16,7 +16,6 @@ type database interface {
 	getTables() ([]string, error)
 	getReferences() (References, error)
 	getDependencyOrder() ([]string, error)
-	getPrimaryKeys() (map[string][]string, error)
 	getColumnsWithDefaultValues() (map[string][]string, error)
 }
 
@@ -77,36 +76,6 @@ func (db postgresDB) getReferences() (References, error) {
 		references[t] = append(references[t], TableReference{table_name: t, column_name: tc, referenced_table_name: rt, referenced_column_name: rtc})
 	}
 	return references, nil
-}
-
-// get all tables that have primary keys and their primary keys
-func (db postgresDB) getPrimaryKeys() (map[string][]string, error) {
-	var query = "" +
-		"SELECT tc.table_name, kc.column_name " +
-		"FROM " +
-		"information_schema.table_constraints tc, " +
-		"information_schema.key_column_usage kc " +
-		"WHERE " +
-		"tc.constraint_type = 'PRIMARY KEY' " +
-		"AND tc.table_schema = 'public' " +
-		"AND kc.table_name = tc.table_name and kc.table_schema = tc.table_schema " +
-		"AND kc.constraint_name = tc.constraint_name"
-
-	rows, err := db.Query(query)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	primary_keys := make(map[string][]string, 0)
-	for rows.Next() {
-		var t, c string
-		if err := rows.Scan(&t, &c); err != nil {
-			log.Fatal(err)
-		}
-		primary_keys[t] = append(primary_keys[t], c)
-	}
-	return primary_keys, nil
 }
 
 // get all tables that have columns with auto values and their columns

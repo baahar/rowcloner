@@ -10,7 +10,7 @@ type DownloadOptions struct {
 type StartPoint struct {
 	table  string
 	column string
-	value  string
+	value  interface{}
 }
 
 type DownloadOption func(*DownloadOptions)
@@ -36,7 +36,7 @@ func NewDownloadOptions(opts ...DownloadOption) (*DownloadOptions, error) {
 }
 
 // Add a starting point for the cloning process
-func Include(table string, column string, value string) DownloadOption {
+func Include(table string, column string, value interface{}) DownloadOption {
 	return func(do *DownloadOptions) {
 		sp := StartPoint{
 			table:  table,
