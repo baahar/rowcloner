@@ -14,10 +14,12 @@ type References map[string][]TableReference
 type DatabaseDump map[string][]map[string]interface{}
 type Mapping map[string]map[string]string
 
+//Download should accept ...DownloadOption directly, the DownloadOptions struct doesn't need to be exported
+
 // gets all related rows to the starting points as specified in the download options
 // from the source database as specified in the connection parameters.
 // returns the collected data as a DatabaseDump of the structure: map[string][]map[string]interface{}
-func Download(cp *ConnectionParameters, options *DownloadOptions) (DatabaseDump, error) {
+func Download(cp *ConnectionParameters, options *downloadOptions) (DatabaseDump, error) {
 	from_db, err := sql.Open("postgres", fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
 		cp.host, cp.port, cp.user, cp.password, cp.dbname))
 	if err != nil {
@@ -28,7 +30,7 @@ func Download(cp *ConnectionParameters, options *DownloadOptions) (DatabaseDump,
 	return download(postgresDB{from_db}, options)
 }
 
-func download(db database, options *DownloadOptions) (DatabaseDump, error) {
+func download(db database, options *downloadOptions) (DatabaseDump, error) {
 	references, err := db.getReferences()
 	if err != nil {
 		return nil, err
@@ -66,12 +68,13 @@ func upload(db database, data DatabaseDump) (Mapping, error) {
 		return nil, err
 	}
 
-	auto_values, err := db.getColumnsWithDefaultValues()
+	primary_keys, err := db.getPrimaryKeys()
 	if err != nil {
 		return nil, err
 	}
 
 	mapping := make(Mapping)
+
 	for _, t := range order {
 		ok, c := isTableSelfReferencing(references, t)
 		if ok {
@@ -82,7 +85,7 @@ func upload(db database, data DatabaseDump) (Mapping, error) {
 			})
 		}
 		for _, r := range data[t] {
-			mapping, err = uploadRow(db, auto_values, references, mapping, t, r)
+			mapping, err = uploadRow(db, primary_keys, references, mapping, t, r)
 			if err != nil {
 				return mapping, err
 			}
@@ -122,14 +125,14 @@ func getDataRecursively(db database, references References, database_dump Databa
 }
 
 // insert a row into the target database and update the mapping if necessary
-func uploadRow(db database, auto_values map[string][]string, references References, mapping Mapping, table_name string, data map[string]interface{}) (Mapping, error) {
+func uploadRow(db database, primary_keys map[string][]string, references References, mapping Mapping, table_name string, data map[string]interface{}) (Mapping, error) {
 	columns := make([]string, 0)
-	av := ""
+	primary_key := ""
 	for key := range data {
-		if !sliceContains(auto_values[table_name], key) {
+		if !sliceContains(primary_keys[table_name], key) {
 			columns = append(columns, key)
 		} else {
-			av = key // column that has an auto value
+			primary_key = key // column that has an auto value
 		}
 	}
 
@@ -161,7 +164,7 @@ func uploadRow(db database, auto_values map[string][]string, references Referenc
 
 	}
 
-	lastInsertId, err := db.insertRow(table_name, columns, values, av)
+	lastInsertId, err := db.insertRow(table_name, columns, values, primary_key)
 	if err != nil {
 		return mapping, err
 	}

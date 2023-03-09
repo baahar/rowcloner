@@ -1,24 +1,26 @@
 package sqlclone
 
-import "errors"
+import (
+	"fmt"
+)
 
-type DownloadOptions struct {
-	start_points []StartPoint
+type downloadOptions struct {
+	start_points []startPoint
 	dont_recurse []string
 }
 
-type StartPoint struct {
+type startPoint struct {
 	table  string
 	column string
 	value  interface{}
 }
 
-type DownloadOption func(*DownloadOptions)
+type DownloadOption func(*downloadOptions)
 
 // Constructor function
-func NewDownloadOptions(opts ...DownloadOption) (*DownloadOptions, error) {
-	do := &DownloadOptions{
-		start_points: make([]StartPoint, 0),
+func NewDownloadOptions(opts ...DownloadOption) (*downloadOptions, error) {
+	do := &downloadOptions{
+		start_points: make([]startPoint, 0),
 		dont_recurse: make([]string, 0),
 	}
 
@@ -28,7 +30,7 @@ func NewDownloadOptions(opts ...DownloadOption) (*DownloadOptions, error) {
 	}
 
 	if len(do.start_points) == 0 {
-		return nil, errors.New("starting point for cloning is missing")
+		return nil, fmt.Errorf("starting point for cloning is missing")
 	}
 
 	// return the modified DownloadOptions instance
@@ -37,8 +39,8 @@ func NewDownloadOptions(opts ...DownloadOption) (*DownloadOptions, error) {
 
 // Add a starting point for the cloning process
 func Include(table string, column string, value interface{}) DownloadOption {
-	return func(do *DownloadOptions) {
-		sp := StartPoint{
+	return func(do *downloadOptions) {
+		sp := startPoint{
 			table:  table,
 			column: column,
 			value:  value,
@@ -49,7 +51,7 @@ func Include(table string, column string, value interface{}) DownloadOption {
 
 // Specify which tables should be ignored during cloning
 func DontRecurse(table string) DownloadOption {
-	return func(do *DownloadOptions) {
+	return func(do *downloadOptions) {
 		do.dont_recurse = append(do.dont_recurse, table)
 	}
 }

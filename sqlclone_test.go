@@ -29,7 +29,7 @@ func (m *mockDB) getDependencyOrder() ([]string, error) {
 	return m.getDependencyOrderReturnValue, nil
 }
 
-func (m *mockDB) getColumnsWithDefaultValues() (map[string][]string, error) {
+func (m *mockDB) getPrimaryKeys() (map[string][]string, error) {
 	myMap := make(map[string][]string, 0)
 	myMap["company"] = append(myMap["company"], "id")
 	myMap["person"] = append(myMap["person"], "id")

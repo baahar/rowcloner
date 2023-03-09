@@ -3,7 +3,6 @@ package sqlclone
 import (
 	"database/sql"
 	"fmt"
-	"log"
 )
 
 type postgresDB struct {
@@ -15,8 +14,8 @@ type database interface {
 	insertRow(string, []string, []interface{}, string) (int, error)
 	getTables() ([]string, error)
 	getReferences() (References, error)
+	getPrimaryKeys() (map[string][]string, error)
 	getDependencyOrder() ([]string, error)
-	getColumnsWithDefaultValues() (map[string][]string, error)
 }
 
 // get list of tables in the database
@@ -28,7 +27,7 @@ func (db postgresDB) getTables() ([]string, error) {
 
 	rows, err := db.Query(query)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("query could not be executed: %q resulting in error: %q", query, err)
 	}
 	defer rows.Close()
 
@@ -36,7 +35,7 @@ func (db postgresDB) getTables() ([]string, error) {
 	for rows.Next() {
 		var t string
 		if err := rows.Scan(&t); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("error extracting table name from result set: %q", err)
 		}
 		tables = append(tables, t)
 	}
@@ -63,7 +62,7 @@ func (db postgresDB) getReferences() (References, error) {
 
 	rows, err := db.Query(query)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("query could not be executed: %q  resulting in error: %q", query, err)
 	}
 	defer rows.Close()
 
@@ -71,38 +70,41 @@ func (db postgresDB) getReferences() (References, error) {
 	for rows.Next() {
 		var t, tc, rt, rtc string
 		if err := rows.Scan(&t, &tc, &rt, &rtc); err != nil {
-			log.Fatal(err)
+			return nil, fmt.Errorf("error extracting table reference from result set: %q", err)
 		}
 		references[t] = append(references[t], TableReference{table_name: t, column_name: tc, referenced_table_name: rt, referenced_column_name: rtc})
 	}
 	return references, nil
 }
 
-// get all tables that have columns with auto values and their columns
-func (db postgresDB) getColumnsWithDefaultValues() (map[string][]string, error) {
+// get all tables that have primary keys and their primary keys
+func (db postgresDB) getPrimaryKeys() (map[string][]string, error) {
 	var query = "" +
-		"SELECT c.table_name, c.column_name " +
-		"FROM information_schema.columns c " +
-		"INNER JOIN information_schema.tables t " +
-		"ON c.table_name = t.table_name " +
-		"WHERE c.column_default IS NOT NULL " +
-		"AND t.table_schema = 'public'"
+		"SELECT tc.table_name, kc.column_name " +
+		"FROM " +
+		"information_schema.table_constraints tc, " +
+		"information_schema.key_column_usage kc " +
+		"WHERE " +
+		"tc.constraint_type = 'PRIMARY KEY' " +
+		"AND tc.table_schema = 'public' " +
+		"AND kc.table_name = tc.table_name and kc.table_schema = tc.table_schema " +
+		"AND kc.constraint_name = tc.constraint_name"
 
 	rows, err := db.Query(query)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("query could not be executed: %q resulting in error: %q", query, err)
 	}
 	defer rows.Close()
 
-	auto_values := make(map[string][]string, 0)
+	primary_keys := make(map[string][]string, 0)
 	for rows.Next() {
 		var t, c string
 		if err := rows.Scan(&t, &c); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("error extracting primary key from result set: %q", err)
 		}
-		auto_values[t] = append(auto_values[t], c)
+		primary_keys[t] = append(primary_keys[t], c)
 	}
-	return auto_values, nil
+	return primary_keys, nil
 }
 
 // returns the list of tables after a topological sort following Kahn's algorithm.
@@ -161,10 +163,11 @@ func (db postgresDB) getRows(table_name string, col string, val interface{}) ([]
 	ret := make([]map[string]interface{}, 0)
 
 	if val != nil {
-		//fmt.Println("SELECT * FROM " + table_name + " WHERE " + col + "='" + fmt.Sprintf("%v", val) + "'")
-		rows, err := db.Query("SELECT * FROM "+table_name+" WHERE "+col+"=$1", val)
+		query := "SELECT * FROM " + table_name + " WHERE \"" + col + "\"=" + fmt.Sprintf("%v", val)
+		//fmt.Println(query)
+		rows, err := db.Query("SELECT * FROM "+table_name+" WHERE \""+col+"\" = $1", val)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("query could not be executed: %q resulting in error: %q", query, err)
 		}
 		defer rows.Close()
 
@@ -176,11 +179,11 @@ func (db postgresDB) getRows(table_name string, col string, val interface{}) ([]
 			}
 			err = rows.Scan(colVals...)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("error extracting column values from result set: %q", err)
 			}
 			colNames, err := rows.Columns()
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("error extracting column names from result set: %q", err)
 			}
 			these := make(map[string]interface{})
 			for idx, name := range colNames {
@@ -195,13 +198,13 @@ func (db postgresDB) getRows(table_name string, col string, val interface{}) ([]
 // insert a row with given column names and values into a database.
 // if the table has a column with an automatically generated value,
 // return that value after insertion, return -1 otherwise
-func (db postgresDB) insertRow(table_name string, columns []string, values []interface{}, auto_value string) (int, error) {
+func (db postgresDB) insertRow(table_name string, columns []string, values []interface{}, primary_key string) (int, error) {
 	cols := ""
 	vals := ""
 	counter := 1
 	for _, c := range columns {
-		if c != auto_value {
-			cols += c + ", "
+		if c != primary_key {
+			cols += "\"" + c + "\", "
 			vals += "$" + fmt.Sprintf("%d", counter) + ", "
 			counter++
 		}
@@ -210,22 +213,23 @@ func (db postgresDB) insertRow(table_name string, columns []string, values []int
 	vals = vals[:len(vals)-2]
 
 	query := "INSERT INTO " + table_name + " (" + cols + ") VALUES (" + vals + ")"
-	//fmt.Println(query)
-	//fmt.Println(values)
 
 	lastInsertId := -1
-	if auto_value != "" {
-		query += " RETURNING " + auto_value
-
+	if primary_key != "" {
+		query += " RETURNING " + primary_key
+		//fmt.Println(query)
+		//fmt.Println(values)
 		err := db.QueryRow(query, values...).Scan(&lastInsertId)
 		if err != nil {
-			return -1, err
+			return -1, fmt.Errorf("insertion could not be executed for: %q resulting in error: %q", query, err)
 		}
 
 	} else {
+		//fmt.Println(query)
+		//fmt.Println(values)
 		_, err := db.Exec(query, values...)
 		if err != nil {
-			return -1, err
+			return -1, fmt.Errorf("insertion could not be executed for: %q resulting in error: %q", query, err)
 		}
 	}
 
